@@ -156,10 +156,6 @@ with tab_salida:
                 df_filtrado = df_filtrado[df_filtrado['Nombre_Mes'] == mes_seleccionado]
             if tecnico_seleccionado != "Todos":
                 df_filtrado = df_filtrado[df_filtrado[col_nombre] == tecnico_seleccionado]
-            
-            if col_cant:
-                total_retirado = df_filtrado[col_cant].sum()
-                st.info(f"📦 Total acumulado de insumos retirados: **{total_retirado} unidades**")
 
             # --- TABLA CONSOLIDADA (TOTALES SUMADOS) ---
             st.markdown("### 🧮 Total Acumulado por Insumo")
