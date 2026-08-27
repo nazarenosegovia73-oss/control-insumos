@@ -79,12 +79,12 @@ if df_inventario_raw is not None:
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Filtros de Salida Mensual")
 
-# --- CABECERA PRINCIPAL SIN LA PALABRA GESTION ---
+# --- CABECERA PRINCIPAL ---
 st.title("🎨🛠️ Control de Insumos")
 
-# Pestañas principales
-tab_ingreso, tab_salida, tab_anual, tab_reposicion, tab_diferencias, tab_inventario = st.tabs(
-    ["📥 Ingresos", "📤 Salida", "📅 Total Anual", "🛒 Reposición", "⚠️ Diferencias", "📦 Inventario"]
+# Pestañas principales con 'Total Anual' al final
+tab_ingreso, tab_salida, tab_reposicion, tab_diferencias, tab_inventario, tab_anual = st.tabs(
+    ["📥 Ingresos", "📤 Salida", "🛒 Reposición", "⚠️ Diferencias", "📦 Inventario", "📅 Total Anual"]
 )
 
 # --- 1. PESTAÑA INGRESOS ---
@@ -193,57 +193,7 @@ with tab_salida:
                 
                 st.bar_chart(data=df_grafico, x=col_b, y=col_cant, use_container_width=True)
 
-# --- 3. NUEVA PESTAÑA: TOTAL ANUAL (EVOLUCIÓN MES A MES) ---
-with tab_anual:
-    st.subheader("📅 Resumen Anual y Evolución Mes a Mes")
-    
-    if df_salida_raw is not None:
-        df_sal_limpio = limpiar_tabla(df_salida_raw)
-        
-        col_fecha = next((c for c in df_sal_limpio.columns if 'fecha' in str(c).lower()), None)
-        col_nombre = next((c for c in df_sal_limpio.columns if any(k in str(c).lower() for k in ['nombre', 'tecnico', 'técnico', 'operario'])), None)
-        col_cant = next((c for c in df_sal_limpio.columns if 'cantidad' in str(c).lower()), None)
-        col_producto = df_sal_limpio.columns[1] if len(df_sal_limpio.columns) > 1 else None
-
-        if col_fecha and col_cant:
-            meses_espanol = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 
-                            7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
-            
-            df_sal_limpio['Mes_Num'] = df_sal_limpio[col_fecha].dt.month
-            df_sal_limpio['Mes'] = df_sal_limpio['Mes_Num'].map(meses_espanol)
-
-            # Selector del tipo de vista
-            tipo_vista = st.radio("Ver resumen anual por:", ["📦 Consumo por Insumo/Producto", "👷 Consumo por Técnico"], horizontal=True)
-
-            if "Insumo" in tipo_vista and col_producto:
-                pivot_df = pd.pivot_table(
-                    df_sal_limpio, 
-                    values=col_cant, 
-                    index=[col_producto], 
-                    columns=['Mes_Num'], 
-                    aggfunc='sum', 
-                    fill_value=0
-                )
-                pivot_df.rename(columns=meses_espanol, inplace=True)
-                pivot_df['Total Anual'] = pivot_df.sum(axis=1)
-                pivot_df = pivot_df.sort_values(by='Total Anual', ascending=False)
-                st.dataframe(pivot_df, use_container_width=True)
-
-            elif "Técnico" in tipo_vista and col_nombre:
-                pivot_df = pd.pivot_table(
-                    df_sal_limpio, 
-                    values=col_cant, 
-                    index=[col_nombre], 
-                    columns=['Mes_Num'], 
-                    aggfunc='sum', 
-                    fill_value=0
-                )
-                pivot_df.rename(columns=meses_espanol, inplace=True)
-                pivot_df['Total Anual'] = pivot_df.sum(axis=1)
-                pivot_df = pivot_df.sort_values(by='Total Anual', ascending=False)
-                st.dataframe(pivot_df, use_container_width=True)
-
-# --- 4. PESTAÑA REPOSICIÓN ---
+# --- 3. PESTAÑA REPOSICIÓN ---
 with tab_reposicion:
     st.subheader("Lista de Compras / Faltantes")
     if df_inventario_raw is not None:
@@ -254,7 +204,7 @@ with tab_reposicion:
             st.info(f"💡 Tenés {len(df_reponer)} artículos en tu lista de compras.")
             st.dataframe(df_reponer.style.map(aplicar_estilos, subset=[col_estado]), use_container_width=True, hide_index=True)
 
-# --- 5. PESTAÑA DIFERENCIAS ---
+# --- 4. PESTAÑA DIFERENCIAS ---
 with tab_diferencias:
     st.subheader("⚠️ Reporte de Diferencias e Inconsistencias")
     if df_inventario_raw is not None:
@@ -269,7 +219,7 @@ with tab_diferencias:
             else:
                 st.success("🎉 ¡Excelente! No hay diferencias o valores negativos registrados.")
 
-# --- 6. PESTAÑA INVENTARIO ---
+# --- 5. PESTAÑA INVENTARIO ---
 with tab_inventario:
     if df_inventario_raw is not None:
         df_inv_limpio = limpiar_tabla(df_inventario_raw, mantener_dif=False)
@@ -301,3 +251,57 @@ with tab_inventario:
             st.dataframe(df_mostrar.style.map(aplicar_estilos, subset=[col_estado]), use_container_width=True, hide_index=True)
         else:
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+
+# --- 6. PESTAÑA TOTAL ANUAL (AL FINAL) ---
+with tab_anual:
+    st.subheader("📅 Resumen Anual y Evolución Mes a Mes")
+    
+    if df_salida_raw is not None:
+        df_sal_limpio = limpiar_tabla(df_salida_raw)
+        
+        col_fecha = next((c for c in df_sal_limpio.columns if 'fecha' in str(c).lower()), None)
+        col_nombre = next((c for c in df_sal_limpio.columns if any(k in str(c).lower() for k in ['nombre', 'tecnico', 'técnico', 'operario'])), None)
+        col_cant = next((c for c in df_sal_limpio.columns if 'cantidad' in str(c).lower()), None)
+        col_producto = df_sal_limpio.columns[1] if len(df_sal_limpio.columns) > 1 else None
+
+        if col_fecha and col_cant:
+            meses_espanol = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 
+                            7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
+            
+            df_sal_limpio['Mes_Num'] = df_sal_limpio[col_fecha].dt.month
+
+            tipo_vista = st.radio("Ver resumen anual por:", ["📦 Consumo por Insumo/Producto", "👷 Consumo por Técnico"], horizontal=True)
+
+            if "Insumo" in tipo_vista and col_producto:
+                pivot_df = pd.pivot_table(
+                    df_sal_limpio, 
+                    values=col_cant, 
+                    index=[col_producto], 
+                    columns=['Mes_Num'], 
+                    aggfunc='sum', 
+                    fill_value=0
+                )
+                pivot_df.rename(columns=meses_espanol, inplace=True)
+                pivot_df['Total Anual'] = pivot_df.sum(axis=1)
+                pivot_df = pivot_df.sort_values(by='Total Anual', ascending=False)
+                
+                # Formatear a números enteros limpios
+                pivot_df = pivot_df.astype(int)
+                st.dataframe(pivot_df, use_container_width=True)
+
+            elif "Técnico" in tipo_vista and col_nombre:
+                pivot_df = pd.pivot_table(
+                    df_sal_limpio, 
+                    values=col_cant, 
+                    index=[col_nombre], 
+                    columns=['Mes_Num'], 
+                    aggfunc='sum', 
+                    fill_value=0
+                )
+                pivot_df.rename(columns=meses_espanol, inplace=True)
+                pivot_df['Total Anual'] = pivot_df.sum(axis=1)
+                pivot_df = pivot_df.sort_values(by='Total Anual', ascending=False)
+                
+                # Formatear a números enteros limpios
+                pivot_df = pivot_df.astype(int)
+                st.dataframe(pivot_df, use_container_width=True)
