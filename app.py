@@ -15,17 +15,20 @@ def obtener_cliente_gspread():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # Intenta leer desde los Secretos de Streamlit Cloud
+        # 1. Intenta leer de los secretos de Streamlit Cloud
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         else:
-            # Si estás probando localmente en tu PC
+            # 2. Lee de tu archivo local en caso de estar probando en tu PC
             creds = ServiceAccountCredentials.from_json_keyfile_name(RUTA_CREDANCIALES, scope)
             
         client = gspread.authorize(creds)
         return client
     except Exception as e:
+        st.error(f"Error de conexión: {e}")
         return None
 
 @st.cache_data(ttl=10)
