@@ -351,11 +351,20 @@ with tab_salida:
                                 if pd.notna(ultimo_registro[col_prov_ing]):
                                     proveedor_automatico = str(ultimo_registro[col_prov_ing]).strip().title()
 
+                precio_total_calc = precio_automatico * cantidad_salida
+
                 st.session_state.lista_salidas_pendientes.append({
-                    "articulo": articulo_val, "Categoría": categoria_val, "Producto / Detalle": producto_salida,
-                    "Marca": marca_val, "Medida / Variedad": medida_val, "cantidad": cantidad_salida,
-                    "fecha": fecha_salida.strftime("%d-%m-%Y"), "nombre": tecnico_final,
-                    "precio": precio_automatico, "proveedor": proveedor_automatico
+                    "articulo": articulo_val, 
+                    "Categoría": categoria_val, 
+                    "Producto / Detalle": producto_salida,
+                    "Marca": marca_val, 
+                    "Medida / Variedad": medida_val, 
+                    "cantidad": cantidad_salida,
+                    "fecha": fecha_salida.strftime("%d-%m-%Y"), 
+                    "nombre": tecnico_final,
+                    "precio": precio_automatico, 
+                    "precio_total": precio_total_calc,
+                    "proveedor": proveedor_automatico
                 })
                 st.toast(f"➕ Agregado a salidas: {producto_salida}")
                 st.rerun()
@@ -374,7 +383,7 @@ with tab_salida:
                     col_c_valores = sheet_salida.col_values(3)
                     primera_fila_vacia = len(col_c_valores) + 1
                     filas_a_subir = df_editado_s.values.tolist()
-                    rango_insertar = f"A{primera_fila_vacia}:J{primera_fila_vacia + len(filas_a_subir) - 1}"
+                    rango_insertar = f"A{primera_fila_vacia}:K{primera_fila_vacia + len(filas_a_subir) - 1}"
                     sheet_salida.update(rango_insertar, filas_a_subir)
                     st.success(f"✅ ¡Se guardaron {len(filas_a_subir)} salidas en Google Sheets!")
                     st.session_state.lista_salidas_pendientes = []
@@ -609,7 +618,7 @@ with tab_inventario:
     if df_inventario_raw is not None and not df_inventario_raw.empty:
         st.dataframe(limpiar_tabla(df_inventario_raw), use_container_width=True, hide_index=True)
 
-# --- PESTAÑA INDICADORES Y COSTO POR PAÑO (ESTILO KPI CARDS) ---
+# --- PESTAÑA INDICADORES Y COSTO POR PAÑO ---
 with tab_indicadores:
     st.subheader("📊 Panel de Control y KPIs del Taller")
     st.markdown("---")
@@ -673,13 +682,11 @@ with tab_indicadores:
     if "panios_por_mes" not in st.session_state:
         st.session_state.panios_por_mes = {}
 
-    # Construir opciones de meses disponibles o año actual
     anio_actual = datetime.date.today().year
     opciones_meses = ["📅 Todos (Histórico Completo)"]
     for m_num in range(1, 13):
         opciones_meses.append(f"{MESES_ESPANOL[m_num].capitalize()} {anio_actual}")
 
-    # Selector de período estilo la captura del usuario
     col_sel_p1, col_sel_p2 = st.columns([2, 2])
     periodo_seleccionado = col_sel_p1.selectbox(
         "📅 Período de Análisis:",
@@ -688,13 +695,11 @@ with tab_indicadores:
         key="select_periodo_kpi"
     )
 
-    # Calcular datos según el período elegido
     consumo_insumos_sel = 0.0
     if periodo_seleccionado.startswith("📅 Todos"):
         consumo_insumos_sel = gasto_por_salidas_total
         clave_panio = "Historico_Total"
     else:
-        # Extraer mes y año
         partes = periodo_seleccionado.split()
         nombre_mes = partes[0].lower()
         anio_mes = int(partes[1])
@@ -706,7 +711,6 @@ with tab_indicadores:
 
     panios_actuales = st.session_state.panios_por_mes.get(clave_panio, 400)
 
-    # Widget para configurar los paños del período seleccionado
     nuevo_panio_valor = col_sel_p2.number_input(
         f"✍️ Paños Realizados en {periodo_seleccionado.replace('📅 ', '')}:",
         min_value=1,
@@ -721,7 +725,6 @@ with tab_indicadores:
 
     st.markdown("### 📈 Indicadores Globales del Período")
     
-    # Tarjetas KPI (Estilo idéntico a la captura)
     kpi1, kpi2, kpi3 = st.columns(3)
     
     with kpi1:
@@ -743,7 +746,6 @@ with tab_indicadores:
     st.markdown("---")
     st.markdown("### 📋 Resumen Detallado de Todos los Meses Configurados")
     
-    # Tabla consolidada con todos los meses que tengan datos o hayan sido tocados
     resumen_tabla_data = []
     meses_a_mostrar = set(list(gastos_salidas_por_mes.keys()) + [pd.Period(year=anio_actual, month=m, freq='M') for m in range(1, 13)])
     
@@ -753,7 +755,6 @@ with tab_indicadores:
         pan_m = st.session_state.panios_por_mes.get(m_nom, 400)
         costo_m = (gasto_m / pan_m) if pan_m > 0 else 0.0
         
-        # Solo mostrar meses con gastos o que el usuario haya configurado explícitamente
         if gasto_m > 0 or m_nom in st.session_state.panios_por_mes:
             resumen_tabla_data.append({
                 "Período / Mes": m_nom,
