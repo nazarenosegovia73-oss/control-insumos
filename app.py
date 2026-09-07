@@ -51,7 +51,6 @@ def cargar_datos(nombre_hoja):
         df = pd.DataFrame(data)
         return df
     except Exception as e:
-        st.error(f"No se pudo cargar la hoja '{nombre_hoja}': {e}")
         return pd.DataFrame()
 
 def convertir_a_numero_precio(val):
@@ -121,10 +120,13 @@ def aplicar_estilos(val):
 def formatear_precio(val):
     return f"${val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+# --- CARGA DE DATOS ---
 df_inventario_raw = cargar_datos("Inventario Insumos")
 df_salida_raw = cargar_datos("salida")
 df_ingreso_raw = cargar_datos("ingresos")
+df_indicadores_raw = cargar_datos("indicadores")
 
+# --- BARRA LATERAL ---
 if st.sidebar.button("🔄 Refrescar Datos", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
@@ -190,6 +192,7 @@ if df_inventario_raw is not None and not df_inventario_raw.empty:
             f"• **Proveedor(es) y Precio:**\n  • {prov_str}"
         )
 
+# --- PESTAÑAS PRINCIPALES ---
 st.title("🎨🛠️ Control de Insumos")
 
 tab_ingreso, tab_salida, tab_reposicion, tab_inventario, tab_indicadores = st.tabs(
@@ -227,9 +230,11 @@ with tab_ingreso:
         cantidad_ingresada = col_cant.number_input("🔢 Cantidad *", min_value=1, value=1, step=1)
         precio_ingresado = col_precio.number_input("💵 Precio Unitario ($) *", min_value=0.0, value=0.0, step=100.0)
         
-        prov_seleccionado = col_prov.selectbox("🏢 Proveedor habitual *", options=opciones_proveedores, index=None, placeholder="Seleccioná un proveedor...")
+        prov_seleccionado = col_prov.selectbox("🏢 Proveedor *", options=opciones_proveedores, index=None, placeholder="Seleccioná un proveedor...")
         nuevo_prov_escrito = st.text_input("➕ O escribí un nuevo proveedor aquí:", placeholder="Ej: Wurth Argentina").strip()
         proveedor_final = nuevo_prov_escrito.title() if nuevo_prov_escrito else (prov_seleccionado.title() if prov_seleccionado else "")
+
+        observaciones_ingreso = st.text_input("📝 Observaciones:", placeholder="Ej: Factura A N° 000123 / Remito").strip()
 
         btn_agregar = st.form_submit_button("➕ Agregar a la Lista de Carga", type="secondary", use_container_width=True)
 
@@ -253,10 +258,17 @@ with tab_ingreso:
                         medida_val = str(fila_match.iloc[0, 4]) if not pd.isna(fila_match.iloc[0, 4]) else ""
 
                 st.session_state.lista_ingresos_pendientes.append({
-                    "Articulo": articulo_val, "Categoria": categoria_val, "Producto": producto_ingresado,
-                    "Marca": marca_val, "Medida": medida_val, "Cantidad": cantidad_ingresada,
-                    "Fecha": fecha_ingreso.strftime("%d-%m-%Y"), "Precio Unitario": precio_ingresado,
-                    "Precio Total": cantidad_ingresada * precio_ingresado, "Proveedor": proveedor_final
+                    "Articulo": articulo_val,
+                    "Categoria": categoria_val,
+                    "Producto": producto_ingresado,
+                    "Marca": marca_val,
+                    "Medida": medida_val,
+                    "Cantidad": cantidad_ingresada,
+                    "Fecha": fecha_ingreso.strftime("%d-%m-%Y"),
+                    "Precio Unitario": precio_ingresado,
+                    "Precio Total": cantidad_ingresada * precio_ingresado,
+                    "Proveedor": proveedor_final,
+                    "Observaciones": observaciones_ingreso
                 })
                 st.toast(f"➕ Agregado a la lista: {producto_ingresado}")
                 st.rerun()
@@ -275,7 +287,7 @@ with tab_ingreso:
                     col_c_valores = sheet_ingresos.col_values(3)
                     primera_fila_vacia = len(col_c_valores) + 1
                     filas_a_subir = df_editado.values.tolist()
-                    rango_insertar = f"A{primera_fila_vacia}:J{primera_fila_vacia + len(filas_a_subir) - 1}"
+                    rango_insertar = f"A{primera_fila_vacia}:K{primera_fila_vacia + len(filas_a_subir) - 1}"
                     sheet_ingresos.update(rango_insertar, filas_a_subir)
                     st.success(f"✅ ¡Se guardaron {len(filas_a_subir)} registros en Google Sheets!")
                     st.session_state.lista_ingresos_pendientes = []
@@ -286,6 +298,12 @@ with tab_ingreso:
         if col_limpiar.button("🗑️ Cancelar Lista", use_container_width=True):
             st.session_state.lista_ingresos_pendientes = []
             st.rerun()
+
+    st.markdown("---")
+    st.subheader("📋 Historial de Ingresos Registrados")
+    if df_ingreso_raw is not None and not df_ingreso_raw.empty:
+        df_ingreso_tabla = limpiar_tabla(df_ingreso_raw)
+        st.dataframe(df_ingreso_tabla, use_container_width=True, hide_index=True)
 
 # --- PESTAÑA SALIDA ---
 with tab_salida:
@@ -303,14 +321,16 @@ with tab_salida:
 
     with st.form("form_agregar_item_salida", clear_on_submit=True):
         col_prod_s, col_fecha_s_form = st.columns([3, 1])
-        producto_salida = col_prod_s.selectbox("📦 Producto / Detalle *", options=opciones_prods_col_c, index=None, placeholder="Escribí una letra para filtrar...", key="select_prod_salida")
-        fecha_salida = col_fecha_s_form.date_input("📅 Fecha de Salida *", value=datetime.date.today(), key="fecha_salida_input")
+        producto_salida = col_prod_s.selectbox("📦 Producto / Detalle *", options=opciones_prods_col_c, index=None, placeholder="Escribí una letra para filtrar...")
+        fecha_salida = col_fecha_s_form.date_input("📅 Fecha de Salida *", value=datetime.date.today())
         
         col_cant_s, col_tec_s_form = st.columns([1, 2])
-        cantidad_salida = col_cant_s.number_input("🔢 Cantidad *", min_value=1, value=1, step=1, key="cant_salida_input")
-        tec_seleccionado = col_tec_s_form.selectbox("👷 Nombre / Técnico habitual *", options=opciones_tecnicos, index=None, placeholder="Seleccioná técnico...", key="tec_select_input")
+        cantidad_salida = col_cant_s.number_input("🔢 Cantidad *", min_value=1, value=1, step=1)
+        tec_seleccionado = col_tec_s_form.selectbox("👷 Nombre / Técnico habitual *", options=opciones_tecnicos, index=None, placeholder="Seleccioná técnico...")
         nuevo_tec_escrito = st.text_input("➕ O escribí un nuevo técnico / responsable aquí:", placeholder="Ej: Roberto Gomez").strip()
         tecnico_final = nuevo_tec_escrito.title() if nuevo_tec_escrito else (tec_seleccionado.title() if tec_seleccionado else "")
+
+        observaciones_salida = st.text_input("📝 Observaciones (Columna L):", placeholder="Ej: Orden N° 1024 / Trabajo de pintura").strip()
 
         btn_agregar_salida = st.form_submit_button("➕ Agregar Salida a la Lista", type="secondary", use_container_width=True)
 
@@ -364,7 +384,8 @@ with tab_salida:
                     "nombre": tecnico_final,
                     "precio": precio_automatico, 
                     "precio_total": precio_total_calc,
-                    "proveedor": proveedor_automatico
+                    "proveedor": proveedor_automatico,
+                    "observaciones": observaciones_salida
                 })
                 st.toast(f"➕ Agregado a salidas: {producto_salida}")
                 st.rerun()
@@ -383,7 +404,7 @@ with tab_salida:
                     col_c_valores = sheet_salida.col_values(3)
                     primera_fila_vacia = len(col_c_valores) + 1
                     filas_a_subir = df_editado_s.values.tolist()
-                    rango_insertar = f"A{primera_fila_vacia}:K{primera_fila_vacia + len(filas_a_subir) - 1}"
+                    rango_insertar = f"A{primera_fila_vacia}:L{primera_fila_vacia + len(filas_a_subir) - 1}"
                     sheet_salida.update(rango_insertar, filas_a_subir)
                     st.success(f"✅ ¡Se guardaron {len(filas_a_subir)} salidas en Google Sheets!")
                     st.session_state.lista_salidas_pendientes = []
@@ -487,294 +508,248 @@ with tab_reposicion:
 with tab_inventario:
     st.subheader("➕ Agregar Nuevo Artículo al Inventario")
     
-    opciones_categorias = []
-    if df_inventario_raw is not None and not df_inventario_raw.empty and len(df_inventario_raw.columns) >= 2:
-        cats_set = set(c.title() for c in df_inventario_raw.iloc[:, 1].dropna().astype(str).str.strip().unique().tolist() if c and c != "0" and c.lower() != "nan")
-        opciones_categorias = sorted(list(cats_set))
+    with st.form("form_nuevo_inventario", clear_on_submit=True):
+        col_cat, col_prod_inv = st.columns([1, 2])
+        categoria_input = col_cat.text_input("📂 Categoría *", placeholder="Ej: Pinturas, Lijas, Enmascarado").strip().title()
+        producto_input = col_prod_inv.text_input("📦 Producto / Detalle Nuevo *", placeholder="Ej: Lija al agua 220").strip()
 
-    col_cat1, col_cat2 = st.columns([2, 1])
-    cat_seleccionada = col_cat1.selectbox("📂 Categoría Existente *", options=opciones_categorias, index=None, placeholder="Escribí una letra para filtrar...")
-    nueva_cat_escrita = col_cat2.text_input("➕ O nueva categoría:", placeholder="Ej: Pinturas").strip()
-    categoria_final = nueva_cat_escrita.title() if nueva_cat_escrita else (cat_seleccionada if cat_seleccionada else "")
+        col_marca, col_ubic = st.columns([2, 2])
+        marca_input = col_marca.text_input("🏷️ Marca", placeholder="Ej: PPG, Norton, Wurth").strip()
+        ubicacion_input = col_ubic.text_input("📍 Ubicación", placeholder="Ej: Depósito 1, Estante A").strip()
 
-    opciones_prods_existentes = []
-    if df_inventario_raw is not None and not df_inventario_raw.empty and len(df_inventario_raw.columns) >= 3:
-        for p in df_inventario_raw.iloc[:, 2].dropna().astype(str).str.strip().unique().tolist():
-            if p and p != "0" and p.lower() != "nan":
-                opciones_prods_existentes.append(p)
-    for pend in st.session_state.lista_inventario_pendientes:
-        if "producto" in pend and pend["producto"]:
-            opciones_prods_existentes.append(str(pend["producto"]).strip())
-    opciones_prods_existentes = sorted(list(set(opciones_prods_existentes)))
+        col_medida, col_stock_ini, col_min_inv = st.columns([2, 1, 1])
+        opciones_medidas = ["bolsas", "cajas", "litros", "unidad"]
+        medida_input = col_medida.selectbox("📏 Medida / Unidad *", options=opciones_medidas, index=None, placeholder="Seleccionar medida...")
+        stock_input = col_stock_ini.number_input("📦 Stock Inicial", min_value=0, step=1, value=0)
+        min_input = col_min_inv.number_input("⚠️ Stock Mínimo", min_value=0, step=1, value=2)
 
-    col_prod_inv1, col_prod_inv2 = st.columns([2, 1])
-    prod_seleccionado_inv = col_prod_inv1.selectbox(
-        "📦 Producto Existente *", 
-        options=opciones_prods_existentes, 
-        index=None, 
-        placeholder="Escribí una letra para buscar coincidencias..."
-    )
-    nuevo_prod_escrito = col_prod_inv2.text_input(
-        "➕ O nuevo producto:", 
-        placeholder="Ej: Lija 220 (Escribí acá si no hay coincidencia)"
-    ).strip()
-    
-    producto_final = nuevo_prod_escrito if nuevo_prod_escrito else (prod_seleccionado_inv if prod_seleccionado_inv else "")
+        btn_agregar_inv = st.form_submit_button("➕ Agregar Artículo a la Lista de Inventario", type="secondary", use_container_width=True)
 
-    marca_nueva = st.text_input("🏷️ Marca", placeholder="Ej: PPG").strip()
+        if btn_agregar_inv:
+            errores_inv = []
+            if not categoria_input: errores_inv.append("Categoría")
+            if not producto_input: errores_inv.append("Producto / Detalle")
+            if not medida_input: errores_inv.append("Medida / Unidad")
 
-    col_medida, col_stock_ini, col_min_inv = st.columns([2, 1, 1])
-    opciones_medidas = ["bolsas", "cajas", "litros", "unidad"]
-    medida_seleccionada = col_medida.selectbox("📏 Medida / Unidad *", options=opciones_medidas, index=None, placeholder="Seleccionar medida...")
-    stock_inicial = col_stock_ini.number_input("📦 Stock Inicial", min_value=0, value=0, step=1)
-    stock_minimo = col_min_inv.number_input("⚠️ Stock Mínimo", min_value=0, value=2, step=1)
-
-    if st.button("➕ Agregar Artículo a la Lista de Inventario", type="secondary", use_container_width=True):
-        errores_inv = []
-        if not categoria_final: errores_inv.append("Categoría")
-        if not producto_final: errores_inv.append("Producto / Detalle")
-        if not medida_seleccionada: errores_inv.append("Medida / Unidad")
-
-        productos_existentes_set = set(p.lower() for p in opciones_prods_existentes)
-        if producto_final and producto_final.lower() in productos_existentes_set and nuevo_prod_escrito:
-            errores_inv.append(f"El producto '{producto_final}' ya existe. Por favor modificalo o seleccionalo de la lista.")
-
-        if errores_inv:
-            st.error(f"⚠️ **Atención:** {', '.join(errores_inv)}")
-        else:
-            todos_los_codigos = []
-            if df_inventario_raw is not None and not df_inventario_raw.empty:
-                col_cods = df_inventario_raw.iloc[:, 0].dropna().astype(str).tolist()
-                todos_los_codigos.extend([c.strip() for c in col_cods if c.strip() and c.strip() != "0" and c.strip().lower() != "nan"])
+            opciones_prods_existentes = []
+            if df_inventario_raw is not None and not df_inventario_raw.empty and len(df_inventario_raw.columns) >= 3:
+                for p in df_inventario_raw.iloc[:, 2].dropna().astype(str).str.strip().unique().tolist():
+                    if p and p != "0" and p.lower() != "nan":
+                        opciones_prods_existentes.append(p.lower())
             for pend in st.session_state.lista_inventario_pendientes:
-                if "articulo" in pend and pend["articulo"]:
-                    todos_los_codigos.append(str(pend["articulo"]).strip())
+                if "producto" in pend and pend["producto"]:
+                    opciones_prods_existentes.append(str(pend["producto"]).strip().lower())
 
-            nuevo_codigo = "001-0001"
-            if todos_los_codigos:
-                ultimo_cod = todos_los_codigos[-1]
-                numeros = re.findall(r'\d+', ultimo_cod)
-                if numeros:
-                    num_int = int(numeros[-1])
-                    nuevo_codigo = ultimo_cod.replace(numeros[-1], str(num_int + 1).zfill(len(numeros[-1])))
-                else:
-                    nuevo_codigo = str(len(todos_los_codigos) + 1).zfill(3)
+            if producto_input and producto_input.lower() in set(opciones_prods_existentes):
+                errores_inv.append(f"El producto '{producto_input}' ya existe en el inventario. Ingrese uno diferente.")
 
-            st.session_state.lista_inventario_pendientes.append({
-                "articulo": nuevo_codigo, "categoria": categoria_final, "producto": producto_final,
-                "marca": marca_nueva, "medida": medida_seleccionada,
-                "stock_inicial": stock_inicial, "stock_minimo": stock_minimo
-            })
-            st.toast(f"➕ Artículo agregado: {producto_final}")
-            st.rerun()
+            if errores_inv:
+                st.error(f"⚠️ **Atención:** {', '.join(errores_inv)}")
+            else:
+                todos_los_codigos = []
+                if df_inventario_raw is not None and not df_inventario_raw.empty:
+                    col_cods = df_inventario_raw.iloc[:, 0].dropna().astype(str).tolist()
+                    todos_los_codigos.extend([c.strip() for c in col_cods if c.strip() and c.strip() != "0" and c.strip().lower() != "nan"])
+                for pend in st.session_state.lista_inventario_pendientes:
+                    if "articulo" in pend and pend["articulo"]:
+                        todos_los_codigos.append(str(pend["articulo"]).strip())
+
+                nuevo_codigo = "001-0001"
+                if todos_los_codigos:
+                    ultimo_cod = todos_los_codigos[-1]
+                    numeros = re.findall(r'\d+', ultimo_cod)
+                    if numeros:
+                        num_int = int(numeros[-1])
+                        nuevo_codigo = ultimo_cod.replace(numeros[-1], str(num_int + 1).zfill(len(numeros[-1])))
+                    else:
+                        nuevo_codigo = str(len(todos_los_codigos) + 1).zfill(3)
+
+                st.session_state.lista_inventario_pendientes.append({
+                    "articulo": nuevo_codigo,
+                    "categoria": categoria_input,
+                    "producto": producto_input,
+                    "marca": marca_input,
+                    "medida": medida_input,
+                    "real": stock_input,
+                    "stock_actual": stock_input,
+                    "stock_minimo": min_input,
+                    "ubicacion": ubicacion_input
+                })
+
+                st.toast(f"➕ Agregado al inventario pendiente: {producto_input}")
+                st.rerun()
 
     if st.session_state.lista_inventario_pendientes:
         st.markdown("---")
-        st.subheader("🛒 Nuevos Artículos Pendientes")
+        st.subheader("🛒 Inventarios Pendientes de Guardar")
         df_pendientes_inv = pd.DataFrame(st.session_state.lista_inventario_pendientes)
         df_editado_inv = st.data_editor(df_pendientes_inv, num_rows="dynamic", use_container_width=True)
         col_guardar_inv, col_limpiar_inv = st.columns([3, 1])
-        if col_guardar_inv.button("💾 Guardar NUEVOS ARTÍCULOS en Google Sheets", type="primary", use_container_width=True):
+        
+        if col_guardar_inv.button("💾 Guardar INVENTARIO en Google Sheets", type="primary", use_container_width=True):
             client = obtener_cliente_gspread()
             if client:
                 try:
-                    sheet_inventario = client.open_by_key(ID_SHEET).worksheet("Inventario Insumos")
-                    primera_fila_vacia = len(sheet_inventario.col_values(1)) + 1
-                    filas_a_subir = []
-                    for index, row in df_editado_inv.iterrows():
-                        f_act = primera_fila_vacia + len(filas_a_subir)
-                        filas_a_subir.append([
-                            str(row.get("articulo", "")), str(row.get("categoria", "")), str(row.get("producto", "")),
-                            str(row.get("marca", "")), str(row.get("medida", "")), int(row.get("stock_inicial", 0)),
-                            int(row.get("stock_inicial", 0)), f"=G{f_act}-F{f_act}", int(row.get("stock_minimo", 0)),
-                            f'=SI(G{f_act}<=I{f_act}; "REPONER"; "OK")'
-                        ])
-                    
-                    rango = f"A{primera_fila_vacia}:J{primera_fila_vacia + len(filas_a_subir) - 1}"
-                    sheet_inventario.update(rango, filas_a_subir, value_input_option='USER_ENTERED')
-                    
-                    for idx, row in enumerate(df_editado_inv.iterrows()):
-                        f_act = primera_fila_vacia + idx
-                        st_ini = int(row[1].get("stock_inicial", 0))
-                        st_min = int(row[1].get("stock_minimo", 0))
-                        
-                        color_f = {"red": 0.97, "green": 0.84, "blue": 0.85} if st_ini <= st_min else {"red": 0.94, "green": 0.94, "blue": 0.94}
-                        color_t = {"red": 0.44, "green": 0.11, "blue": 0.12} if st_ini <= st_min else {"red": 0.0, "green": 0.0, "blue": 0.0}
-                        sheet_inventario.format(f"J{f_act}", {"backgroundColor": color_f, "textFormat": {"foregroundColor": color_t, "bold": True}})
-                    
-                    st.success(f"✅ ¡Se agregaron {len(filas_a_subir)} artículos nuevos al inventario!")
+                    sheet_inv = client.open_by_key(ID_SHEET).worksheet("Inventario Insumos")
+                    col_a_valores = sheet_inv.col_values(1)
+                    primera_fila_vacia = len(col_a_valores) + 1
+                    cant_filas = len(df_editado_inv)
+
+                    bloque_A_G = df_editado_inv[["articulo", "categoria", "producto", "marca", "medida", "real", "stock_actual"]].values.tolist()
+                    bloque_I = [[row["stock_minimo"]] for _, row in df_editado_inv.iterrows()]
+                    bloque_K = [[row["ubicacion"]] for _, row in df_editado_inv.iterrows()]
+
+                    sheet_inv.update(f"A{primera_fila_vacia}:G{primera_fila_vacia + cant_filas - 1}", bloque_A_G)
+                    sheet_inv.update(f"I{primera_fila_vacia}:I{primera_fila_vacia + cant_filas - 1}", bloque_I)
+                    sheet_inv.update(f"K{primera_fila_vacia}:K{primera_fila_vacia + cant_filas - 1}", bloque_K)
+
+                    st.success(f"✅ ¡Se guardaron {cant_filas} artículos en Google Sheets!")
                     st.session_state.lista_inventario_pendientes = []
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as err:
-                    st.error(f"❌ Error: {err}")
-
-        if col_limpiar_inv.button("🗑️ Cancelar Lista", use_container_width=True):
+                    st.error(f"❌ Error al escribir en Google Sheets: {err}")
+                    
+        if col_limpiar_inv.button("🗑️ Cancelar Lista (Inventario)", use_container_width=True):
             st.session_state.lista_inventario_pendientes = []
             st.rerun()
 
     st.markdown("---")
-    st.subheader("📦 Inventario General de Insumos")
+    st.subheader("📦 Tabla Completa de Inventario")
     if df_inventario_raw is not None and not df_inventario_raw.empty:
-        st.dataframe(limpiar_tabla(df_inventario_raw), use_container_width=True, hide_index=True)
+        df_inv_tabla = limpiar_tabla(df_inventario_raw, mantener_dif=True)
+        st.dataframe(df_inv_tabla, use_container_width=True, hide_index=True)
 
-# --- PESTAÑA INDICADORES Y COSTO POR PAÑO ---
+# --- PESTAÑA INDICADORES (DINÁMICA MULTIANUAL) ---
 with tab_indicadores:
     st.subheader("📊 Panel de Control y KPIs del Taller")
+
+    df_salida_limp = limpiar_tabla(df_salida_raw) if df_salida_raw is not None and not df_salida_raw.empty else pd.DataFrame()
+    df_ind_sheet = cargar_datos("indicadores")
+
+    lista_meses_nombres = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+    periodos_disponibles_set = set()
+    
+    if not df_salida_limp.empty:
+        col_fecha_sal = next((c for c in df_salida_limp.columns if 'fecha' in str(c).lower()), None)
+        if col_fecha_sal:
+            df_salida_limp['dt_temp'] = pd.to_datetime(df_salida_limp[col_fecha_sal], errors='coerce')
+            for _, r in df_salida_limp.dropna(subset=['dt_temp']).iterrows():
+                m_num = int(r['dt_temp'].month)
+                anio_val = int(r['dt_temp'].year)
+                m_nombre = lista_meses_nombres[m_num - 1].capitalize()
+                periodos_disponibles_set.add((anio_val, m_num, f"{m_nombre} {anio_val}"))
+
+    if df_ind_sheet is not None and not df_ind_sheet.empty:
+        col_m_ind = df_ind_sheet.columns[0]
+        for val_ind in df_ind_sheet[col_m_ind].dropna().astype(str):
+            val_ind_limpio = val_ind.strip().lower()
+            for m_idx, m_nom in enumerate(lista_meses_nombres):
+                if m_nom in val_ind_limpio:
+                    # Intentar extraer el año de la celda, si no está se asume el año actual
+                    numeros_en_str = re.findall(r'\d{4}', val_ind_limpio)
+                    anio_val = int(numeros_en_str[0]) if numeros_en_str else datetime.date.today().year
+                    m_num = m_idx + 1
+                    m_nombre_cap = m_nom.capitalize()
+                    periodos_disponibles_set.add((anio_val, m_num, f"{m_nombre_cap} {anio_val}"))
+
+    if not periodos_disponibles_set:
+        now = datetime.date.today()
+        periodos_disponibles_set.add((now.year, now.month, f"{lista_meses_nombres[now.month-1].capitalize()} {now.year}"))
+
+    periodos_ordenados = sorted(list(periodos_disponibles_set), key=lambda x: (x[0], x[1]), reverse=True)
+    lista_opciones_str = [p[2] for p in periodos_ordenados]
+
+    opciones_periodo = ["Todos (Histórico Completo)"] + lista_opciones_str
+
+    periodo_seleccionado = st.selectbox("📅 Período de Análisis (para KPIs superiores):", options=opciones_periodo, index=0)
+
     st.markdown("---")
 
-    df_ing_limpio = pd.DataFrame()
-    meses_disponibles = []
-    
-    if df_ingreso_raw is not None and not df_ingreso_raw.empty:
-        df_ing_limpio = limpiar_tabla(df_ingreso_raw)
-        col_prod_ing = next((c for c in df_ing_limpio.columns if any(k in str(c).lower() for k in ['producto', 'insumo', 'detalle', 'descripcion'])), None)
-        col_precio_ing = next((c for c in df_ing_limpio.columns if any(k in str(c).lower() for k in ['precio', 'costo', 'valor'])), None)
-        col_fecha_ing = next((c for c in df_ing_limpio.columns if 'fecha' in str(c).lower()), None)
+    resumen_meses = []
 
-        if col_prod_ing and col_precio_ing:
-            df_ing_limpio['producto_lower'] = df_ing_limpio[col_prod_ing].astype(str).str.strip().str.lower()
-            df_ing_limpio['precio_num'] = df_ing_limpio[col_precio_ing].apply(convertir_a_numero_precio)
-            
-            if col_fecha_ing:
-                df_ing_limpio['AnioMes'] = df_ing_limpio[col_fecha_ing].dt.to_period('M')
-                meses_disponibles = sorted([p for p in df_ing_limpio['AnioMes'].dropna().unique()], reverse=True)
+    if not df_salida_limp.empty:
+        col_fecha_sal = next((c for c in df_salida_limp.columns if 'fecha' in str(c).lower()), None)
+        col_total_sal = next((c for c in df_salida_limp.columns if 'precio_total' in str(c).lower() or 'total' in str(c).lower()), None)
 
-    gasto_por_salidas_total = 0.0
-    gastos_salidas_por_mes = {}
-    
-    if df_salida_raw is not None and not df_salida_raw.empty:
-        df_salida_limpio = limpiar_tabla(df_salida_raw)
-        col_fecha_sal = next((c for c in df_salida_limpio.columns if 'fecha' in str(c).lower()), None)
-        col_prod_sal = next((c for c in df_salida_limpio.columns if any(k in str(c).lower() for k in ['producto', 'detalle', 'insumo'])), None)
-        col_cant_sal = next((c for c in df_salida_limpio.columns if any(k in str(c).lower() for k in ['cantidad', 'cant'])), None)
+        if col_fecha_sal and col_total_sal:
+            df_salida_limp['dt_real'] = pd.to_datetime(df_salida_limp[col_fecha_sal], errors='coerce')
+            df_salida_limp['anio'] = df_salida_limp['dt_real'].dt.year
+            df_salida_limp['mes_num'] = df_salida_limp['dt_real'].dt.month
 
-        if col_prod_sal and col_cant_sal:
-            if col_fecha_sal:
-                df_salida_limpio['AnioMes'] = df_salida_limpio[col_fecha_sal].dt.to_period('M')
-
-            for _, r_sal in df_salida_limpio.iterrows():
-                p_nom = str(r_sal[col_prod_sal]).strip().lower()
-                cant_retirada = convertir_a_numero_precio(r_sal[col_cant_sal])
-                fecha_salida_reg = r_sal[col_fecha_sal] if (col_fecha_sal and pd.notna(r_sal[col_fecha_sal])) else None
+            for (anio_val, mes_num), sub_df in df_salida_limp.groupby(['anio', 'mes_num']):
+                if pd.isna(anio_val) or pd.isna(mes_num):
+                    continue
                 
-                precio_u_max = 0.0
-                if not df_ing_limpio.empty and 'producto_lower' in df_ing_limpio.columns:
-                    mask = (df_ing_limpio['producto_lower'] == p_nom)
-                    if fecha_salida_reg and col_fecha_ing:
-                        mask = mask & (df_ing_limpio[col_fecha_ing] <= fecha_salida_reg)
+                nombre_m = lista_meses_nombres[int(mes_num) - 1]
+                nombre_periodo = f"{nombre_m.capitalize()} {int(anio_val)}"
+                
+                costo_mes = sub_df[col_total_sal].apply(convertir_a_numero_precio).sum()
+
+                # BÚSQUEDA ROBUSTA DE PAÑOS EN GOOGLE SHEETS
+                panos_mes = 0
+                if df_ind_sheet is not None and not df_ind_sheet.empty:
+                    col_mes_ind = df_ind_sheet.columns[0]
+                    col_panos_ind = df_ind_sheet.columns[1]
                     
-                    historial_previo = df_ing_limpio[mask]
-                    if not historial_previo.empty:
-                        precio_u_max = float(historial_previo['precio_num'].max())
-                    else:
-                        historial_general = df_ing_limpio[df_ing_limpio['producto_lower'] == p_nom]
-                        if not historial_general.empty:
-                            precio_u_max = float(historial_general['precio_num'].max())
+                    for _, fila_ind in df_ind_sheet.iterrows():
+                        celda_mes_str = str(fila_ind[col_mes_ind]).strip().lower()
+                        # Comprobamos si coincide el mes y el año en el texto del Sheet
+                        if nombre_m in celda_mes_str and str(anio_val) in celda_mes_str:
+                            val_p = fila_ind[col_panos_ind]
+                            if pd.notna(val_p) and str(val_p).strip() != "":
+                                try:
+                                    panos_mes = int(float(str(val_p).replace(',', '.')))
+                                except:
+                                    panos_mes = 0
+                            break
 
-                subtotal_movimiento = cant_retirada * precio_u_max
-                gasto_por_salidas_total += subtotal_movimiento
+                costo_x_pano = (costo_mes / panos_mes) if panos_mes > 0 else 0.0
                 
-                if col_fecha_sal and pd.notna(r_sal['AnioMes']):
-                    per = r_sal['AnioMes']
-                    gastos_salidas_por_mes[per] = gastos_salidas_por_mes.get(per, 0.0) + subtotal_movimiento
+                resumen_meses.append({
+                    "Período / Mes": nombre_periodo,
+                    "Consumo Insumos ($)": costo_mes,
+                    "Paños Realizados": panos_mes,
+                    "Costo por Paño ($)": costo_x_pano,
+                    "orden_cronologico": int(anio_val) * 100 + int(mes_num)
+                })
 
-    if "panios_por_mes" not in st.session_state:
-        st.session_state.panios_por_mes = {}
+    df_resumen = pd.DataFrame(resumen_meses)
 
-    anio_actual = datetime.date.today().year
-    opciones_meses = ["📅 Todos (Histórico Completo)"]
-    for m_num in range(1, 13):
-        opciones_meses.append(f"{MESES_ESPANOL[m_num].capitalize()} {anio_actual}")
-
-    col_sel_p1, col_sel_p2 = st.columns([2, 2])
-    periodo_seleccionado = col_sel_p1.selectbox(
-        "📅 Período de Análisis:",
-        options=opciones_meses,
-        index=0,
-        key="select_periodo_kpi"
-    )
-
-    consumo_insumos_sel = 0.0
-    if periodo_seleccionado.startswith("📅 Todos"):
-        consumo_insumos_sel = gasto_por_salidas_total
-        clave_panio = "Historico_Total"
+    if "Todos" in periodo_seleccionado:
+        total_consumo = df_resumen["Consumo Insumos ($)"].sum() if not df_resumen.empty else 0.0
+        total_panos = df_resumen["Paños Realizados"].sum() if not df_resumen.empty else 0
+        costo_promedio = (total_consumo / total_panos) if total_panos > 0 else 0.0
     else:
-        partes = periodo_seleccionado.split()
-        nombre_mes = partes[0].lower()
-        anio_mes = int(partes[1])
-        num_mes = next((k for k, v in MESES_ESPANOL.items() if v == nombre_mes), 1)
-        
-        per_obj = pd.Period(year=anio_mes, month=num_mes, freq='M')
-        consumo_insumos_sel = gastos_salidas_por_mes.get(per_obj, 0.0)
-        clave_panio = periodo_seleccionado
-
-    panios_actuales = st.session_state.panios_por_mes.get(clave_panio, 400)
-
-    nuevo_panio_valor = col_sel_p2.number_input(
-        f"✍️ Paños Realizados en {periodo_seleccionado.replace('📅 ', '')}:",
-        min_value=1,
-        value=int(panios_actuales),
-        step=1,
-        key=f"input_panio_{periodo_seleccionado}"
-    )
-    st.session_state.panios_por_mes[clave_panio] = nuevo_panio_valor
-    panios_finales = nuevo_panio_valor
-
-    costo_por_pano_calc = (consumo_insumos_sel / panios_finales) if panios_finales > 0 else 0.0
+        fila_sel = df_resumen[df_resumen["Período / Mes"] == periodo_seleccionado] if not df_resumen.empty else pd.DataFrame()
+        if not fila_sel.empty:
+            total_consumo = fila_sel.iloc[0]["Consumo Insumos ($)"]
+            total_panos = int(fila_sel.iloc[0]["Paños Realizados"])
+            costo_promedio = (total_consumo / total_panos) if total_panos > 0 else 0.0
+        else:
+            total_consumo = 0.0
+            total_panos = 0
+            costo_promedio = 0.0
 
     st.markdown("### 📈 Indicadores Globales del Período")
     
     kpi1, kpi2, kpi3 = st.columns(3)
-    
-    with kpi1:
-        st.metric(
-            label="CONSUMO DE INSUMOS",
-            value=formatear_precio(consumo_insumos_sel)
-        )
-    with kpi2:
-        st.metric(
-            label="PAÑOS REALIZADOS",
-            value=f"{panios_finales:,}"
-        )
-    with kpi3:
-        st.metric(
-            label="COSTO PROMEDIO X PAÑO",
-            value=formatear_precio(costo_por_pano_calc)
-        )
+    kpi1.metric(label="CONSUMO DE INS. (HISTÓRICO REAL)", value=formatear_precio(total_consumo))
+    kpi2.metric(label="PAÑOS REALIZADOS", value=f"{total_panos}")
+    kpi3.metric(label="COSTO PROMEDIO X PAÑO", value=formatear_precio(costo_promedio))
 
     st.markdown("---")
-    st.markdown("### 📋 Resumen Detallado de Todos los Meses Configurados")
-    
-    resumen_tabla_data = []
-    meses_a_mostrar = set(list(gastos_salidas_por_mes.keys()) + [pd.Period(year=anio_actual, month=m, freq='M') for m in range(1, 13)])
-    
-    for per in sorted(list(meses_a_mostrar), reverse=True):
-        m_nom = f"{MESES_ESPANOL[per.month].capitalize()} {per.year}"
-        gasto_m = gastos_salidas_por_mes.get(per, 0.0)
-        pan_m = st.session_state.panios_por_mes.get(m_nom, 400)
-        costo_m = (gasto_m / pan_m) if pan_m > 0 else 0.0
-        
-        if gasto_m > 0 or m_nom in st.session_state.panios_por_mes:
-            resumen_tabla_data.append({
-                "Período / Mes": m_nom,
-                "Consumo Insumos ($)": gasto_m,
-                "Paños Realizados": pan_m,
-                "Costo por Paño ($)": costo_m
-            })
 
-    if resumen_tabla_data:
-        df_resumen_final = pd.DataFrame(resumen_tabla_data)
-        st.dataframe(
-            df_resumen_final,
-            column_config={
-                "Período / Mes": st.column_config.TextColumn("Período / Mes", disabled=True),
-                "Consumo Insumos ($)": st.column_config.NumberColumn("Consumo Insumos ($)", format="$ %.2f", disabled=True),
-                "Paños Realizados": st.column_config.NumberColumn("Paños Realizados", disabled=True),
-                "Costo por Paño ($)": st.column_config.NumberColumn("Costo por Paño ($)", format="$ %.2f", disabled=True),
-            },
-            hide_index=True,
-            use_container_width=True
-        )
+    st.markdown("### 📋 Resumen Histórico Detallado (Cargado en Google Sheets)")
+    st.info("💡 *Los datos de 'Paños Realizados' se leen directamente de tu pestaña 'indicadores' en Google Sheets.*")
+
+    if not df_resumen.empty:
+        df_resumen_display = df_resumen.sort_values(by="orden_cronologico", ascending=False).drop(columns=["orden_cronologico"]).copy()
+
+        df_resumen_display["Consumo Insumos ($)"] = df_resumen_display["Consumo Insumos ($)"].apply(formatear_precio)
+        df_resumen_display["Costo por Paño ($)"] = df_resumen_display["Costo por Paño ($)"].apply(formatear_precio)
+
+        st.dataframe(df_resumen_display, use_container_width=True, hide_index=True)
     else:
-        st.info("No hay registros de salidas con montos para mostrar todavía.")
+        st.info("No hay registros de salidas suficientes para calcular indicadores históricos.")
