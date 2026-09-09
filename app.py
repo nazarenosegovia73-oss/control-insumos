@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import re
 import datetime
@@ -9,20 +9,20 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="Control de Insumos", page_icon="🎨", layout="wide")
 
 ID_SHEET = "1cJ6FH-lJWn52UzhMRAEhpIZ-FRcdfJNzwYtouAQE0CE"
-RUTA_CREDANCIALES = "credenciales.json"
+RUTA_CREDENTIALES = "credenciales.json"
 
 MESES_ESPANOL = {
-    1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
-    5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
-    9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
 }
 
 def obtener_cliente_gspread():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        if os.path.exists(RUTA_CREDANCIALES):
-            creds = ServiceAccountCredentials.from_json_keyfile_name(RUTA_CREDANCIALES, scope)
+        if os.path.exists(RUTA_CREDENTIALES):
+            creds = ServiceAccountCredentials.from_json_keyfile_name(RUTA_CREDENTIALES, scope)
         elif "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in creds_dict:
@@ -47,8 +47,16 @@ def cargar_datos(nombre_hoja):
         
         sheet = client.open_by_key(ID_SHEET)
         worksheet = sheet.worksheet(nombre_hoja)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
+        
+        # Usamos get_all_values() para traer toda la matriz sin cortes ni filtros de cabecera predeterminados
+        data = worksheet.get_all_values()
+        if not data or len(data) <= 1:
+            return pd.DataFrame()
+            
+        header = data[0]
+        rows = data[1:]
+        
+        df = pd.DataFrame(rows, columns=header)
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -62,10 +70,13 @@ def convertir_a_numero_precio(val):
     if not s:
         return 0.0
     if ',' in s and '.' in s:
-        s = s.replace(',', '') if s.find(',') < s.find('.') else s.replace('.', '').replace(',', '.')
+        if s.find(',') > s.find('.'):
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            s = s.replace(',', '')
     elif ',' in s:
-        s = s.replace(',', '.') if len(s.split(',')[-1]) == 2 else s.replace(',', '')
-    elif '.' in s and len(s.split('.')[-1]) == 3:
+        s = s.replace(',', '.')
+    elif '.' in s and len(s.split('.')[-1]) == 3 and len(s.split('.')) > 2:
         s = s.replace('.', '')
     try:
         return float(s)
@@ -86,9 +97,26 @@ def limpiar_tabla(df, mantener_dif=False):
     for col in df_limpio.columns:
         col_lower = str(col).lower()
         if 'fecha' in col_lower:
-            serie_fechas = df_limpio[col].astype(str).str.strip().str.replace('-', '/')
-            df_limpio[col] = pd.to_datetime(serie_fechas, errors='coerce', dayfirst=True)
-            df_limpio.loc[df_limpio[col].dt.year < 2020, col] = pd.NaT
+            serie_str = df_limpio[col].astype(str).str.strip()
+            serie_str = serie_str.str.replace('/', '-', regex=False)
+            
+            fechas_parsed = pd.to_datetime(serie_str, errors='coerce', dayfirst=True)
+            
+            mascara_nat = fechas_parsed.isna() & (serie_str != "") & (serie_str.str.lower() != "nan")
+            if mascara_nat.any():
+                for idx_f in df_limpio[mascara_nat].index:
+                    val_str = str(df_limpio.loc[idx_f, col]).strip()
+                    match = re.findall(r'(\d+)', val_str)
+                    if len(match) >= 3:
+                        try:
+                            d, m, a = int(match[0]), int(match[1]), int(match[2])
+                            if a < 100: a += 2000
+                            fechas_parsed.loc[idx_f] = pd.Timestamp(year=a, month=m, day=d)
+                        except:
+                            pass
+            
+            fechas_parsed[fechas_parsed.dt.year < 2020] = pd.NaT
+            df_limpio[col] = fechas_parsed
         elif any(k in col_lower for k in ['stock', 'cantidad', 'minimo', 'mínimo', 'dif']):
             df_limpio[col] = pd.to_numeric(df_limpio[col], errors='coerce').fillna(0).astype(int)
         elif any(k in col_lower for k in ['precio', 'costo', 'valor', 'unitario']):
@@ -124,7 +152,6 @@ def formatear_precio(val):
 df_inventario_raw = cargar_datos("Inventario Insumos")
 df_salida_raw = cargar_datos("salida")
 df_ingreso_raw = cargar_datos("ingresos")
-df_indicadores_raw = cargar_datos("indicadores")
 
 # --- BARRA LATERAL ---
 if st.sidebar.button("🔄 Refrescar Datos", use_container_width=True):
@@ -300,9 +327,11 @@ with tab_ingreso:
             st.rerun()
 
     st.markdown("---")
-    st.subheader("📋 Historial de Ingresos Registrados")
+    st.subheader("📋 Historial Completo de Ingresos Registrados")
     if df_ingreso_raw is not None and not df_ingreso_raw.empty:
         df_ingreso_tabla = limpiar_tabla(df_ingreso_raw)
+        if 'fecha' in df_ingreso_tabla.columns:
+            df_ingreso_tabla['fecha'] = pd.to_datetime(df_ingreso_tabla['fecha'], errors='coerce').dt.strftime('%d-%m-%Y')
         st.dataframe(df_ingreso_tabla, use_container_width=True, hide_index=True)
 
 # --- PESTAÑA SALIDA ---
@@ -327,7 +356,7 @@ with tab_salida:
         col_cant_s, col_tec_s_form = st.columns([1, 2])
         cantidad_salida = col_cant_s.number_input("🔢 Cantidad *", min_value=1, value=1, step=1)
         tec_seleccionado = col_tec_s_form.selectbox("👷 Nombre / Técnico habitual *", options=opciones_tecnicos, index=None, placeholder="Seleccioná técnico...")
-        nuevo_tec_escrito = st.text_input("➕ O escribí un nuevo técnico / responsable aquí:", placeholder="Ej: Roberto Gomez").strip()
+        nuevo_tec_escrito = st.text_input("➕ O escribí un nuevo técnico / responsable:", placeholder="Ej: Roberto Gomez").strip()
         tecnico_final = nuevo_tec_escrito.title() if nuevo_tec_escrito else (tec_seleccionado.title() if tec_seleccionado else "")
 
         observaciones_salida = st.text_input("📝 Observaciones (Columna L):", placeholder="Ej: Orden N° 1024 / Trabajo de pintura").strip()
@@ -417,9 +446,11 @@ with tab_salida:
             st.rerun()
 
     st.markdown("---")
-    st.subheader("📋 Historial de Salidas Registradas")
+    st.subheader("📋 Historial Completo de Salidas Registradas")
     if df_salida_raw is not None and not df_salida_raw.empty:
         df_salida_tabla = limpiar_tabla(df_salida_raw)
+        if 'fecha' in df_salida_tabla.columns:
+            df_salida_tabla['fecha'] = pd.to_datetime(df_salida_tabla['fecha'], errors='coerce').dt.strftime('%d-%m-%Y')
         st.dataframe(df_salida_tabla, use_container_width=True, hide_index=True)
 
 # --- PESTAÑA REPOSICIÓN ---
@@ -620,102 +651,95 @@ with tab_inventario:
         df_inv_tabla = limpiar_tabla(df_inventario_raw, mantener_dif=True)
         st.dataframe(df_inv_tabla, use_container_width=True, hide_index=True)
 
-# --- PESTAÑA INDICADORES (DINÁMICA MULTIANUAL) ---
+# --- PESTAÑA INDICADORES ---
 with tab_indicadores:
-    st.subheader("📊 Panel de Control y KPIs del Taller")
+    st.subheader("📊 Panel de Control y Costos por Paño")
 
     df_salida_limp = limpiar_tabla(df_salida_raw) if df_salida_raw is not None and not df_salida_raw.empty else pd.DataFrame()
-    df_ind_sheet = cargar_datos("indicadores")
+    
+    anio_sheet = 2026
+    dict_panos_sheet = {}
+    
+    client_ind = obtener_cliente_gspread()
+    if client_ind:
+        try:
+            sheet_ind_obj = client_ind.open_by_key(ID_SHEET).worksheet("indicadores")
+            filas_ind = sheet_ind_obj.get_all_values()
+            if filas_ind and len(filas_ind) > 0:
+                try:
+                    anio_sheet = int(str(filas_ind[0][0]).strip())
+                except:
+                    anio_sheet = 2026
+                
+                mes_map_dict = {
+                    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+                    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+                    "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
+                }
+                for f in filas_ind[1:]:
+                    if len(f) >= 2:
+                        m_txt = str(f[0]).strip().lower()
+                        p_txt = str(f[1]).strip()
+                        if m_txt and m_txt != "total":
+                            for m_nom, m_num in mes_map_dict.items():
+                                if m_nom in m_txt:
+                                    try:
+                                        val_p = int(float(p_txt.replace(",", "."))) if p_txt else 0
+                                        if val_p > 0:
+                                            dict_panos_sheet[(anio_sheet, m_num)] = val_p
+                                    except:
+                                        pass
+        except Exception as e:
+            pass
 
     lista_meses_nombres = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
-
-    periodos_disponibles_set = set()
+    
+    meses_a_procesar = set(dict_panos_sheet.keys())
     
     if not df_salida_limp.empty:
         col_fecha_sal = next((c for c in df_salida_limp.columns if 'fecha' in str(c).lower()), None)
         if col_fecha_sal:
-            df_salida_limp['dt_temp'] = pd.to_datetime(df_salida_limp[col_fecha_sal], errors='coerce')
-            for _, r in df_salida_limp.dropna(subset=['dt_temp']).iterrows():
-                m_num = int(r['dt_temp'].month)
-                anio_val = int(r['dt_temp'].year)
-                m_nombre = lista_meses_nombres[m_num - 1].capitalize()
-                periodos_disponibles_set.add((anio_val, m_num, f"{m_nombre} {anio_val}"))
+            df_salida_limp['dt_real'] = pd.to_datetime(df_salida_limp[col_fecha_sal], errors='coerce', dayfirst=True)
+            for _, r in df_salida_limp.dropna(subset=['dt_real']).iterrows():
+                meses_a_procesar.add((int(r['dt_real'].year), int(r['dt_real'].month)))
 
-    if df_ind_sheet is not None and not df_ind_sheet.empty:
-        col_m_ind = df_ind_sheet.columns[0]
-        for val_ind in df_ind_sheet[col_m_ind].dropna().astype(str):
-            val_ind_limpio = val_ind.strip().lower()
-            for m_idx, m_nom in enumerate(lista_meses_nombres):
-                if m_nom in val_ind_limpio:
-                    # Intentar extraer el año de la celda, si no está se asume el año actual
-                    numeros_en_str = re.findall(r'\d{4}', val_ind_limpio)
-                    anio_val = int(numeros_en_str[0]) if numeros_en_str else datetime.date.today().year
-                    m_num = m_idx + 1
-                    m_nombre_cap = m_nom.capitalize()
-                    periodos_disponibles_set.add((anio_val, m_num, f"{m_nombre_cap} {anio_val}"))
+    resumen_meses = []
+    for (anio_val, mes_num) in sorted(list(meses_a_procesar), key=lambda x: (x[0], x[1]), reverse=True):
+        nombre_m = lista_meses_nombres[int(mes_num) - 1]
+        nombre_periodo = f"{nombre_m.capitalize()} {int(anio_val)}"
+        
+        costo_mes = 0.0
+        if not df_salida_limp.empty:
+            col_fecha_sal = next((c for c in df_salida_limp.columns if 'fecha' in str(c).lower()), None)
+            col_total_sal = next((c for c in df_salida_limp.columns if 'precio_total' in str(c).lower() or 'total' in str(c).lower()), None)
+            if col_fecha_sal and col_total_sal:
+                sub_df = df_salida_limp[
+                    (df_salida_limp['dt_real'].dt.year == anio_val) & 
+                    (df_salida_limp['dt_real'].dt.month == mes_num)
+                ]
+                costo_mes = sub_df[col_total_sal].apply(convertir_a_numero_precio).sum()
 
-    if not periodos_disponibles_set:
-        now = datetime.date.today()
-        periodos_disponibles_set.add((now.year, now.month, f"{lista_meses_nombres[now.month-1].capitalize()} {now.year}"))
+        panos_mes = dict_panos_sheet.get((anio_val, mes_num), 0)
 
+        if costo_mes > 0 or panos_mes > 0:
+            resumen_meses.append({
+                "Período / Mes": nombre_periodo,
+                "Consumo Insumos ($)": costo_mes,
+                "Paños Realizados": panos_mes,
+                "Costo por Paño ($)": (costo_mes / panos_mes) if panos_mes > 0 else 0.0,
+                "orden_cronologico": int(anio_val) * 100 + int(mes_num)
+            })
+
+    df_resumen = pd.DataFrame(resumen_meses)
+
+    periodos_disponibles_set = {(item["orden_cronologico"] // 100, item["orden_cronologico"] % 100, item["Período / Mes"]) for item in resumen_meses}
     periodos_ordenados = sorted(list(periodos_disponibles_set), key=lambda x: (x[0], x[1]), reverse=True)
     lista_opciones_str = [p[2] for p in periodos_ordenados]
 
-    opciones_periodo = ["Todos (Histórico Completo)"] + lista_opciones_str
-
-    periodo_seleccionado = st.selectbox("📅 Período de Análisis (para KPIs superiores):", options=opciones_periodo, index=0)
+    opciones_periodo = ["Todos (Histórico con Datos)"] + lista_opciones_str
+    periodo_seleccionado = st.selectbox("📅 Período de Análisis (para KPIs de Costos y Paños):", options=opciones_periodo, index=0, key="sel_periodo_kpi_final")
 
     st.markdown("---")
-
-    resumen_meses = []
-
-    if not df_salida_limp.empty:
-        col_fecha_sal = next((c for c in df_salida_limp.columns if 'fecha' in str(c).lower()), None)
-        col_total_sal = next((c for c in df_salida_limp.columns if 'precio_total' in str(c).lower() or 'total' in str(c).lower()), None)
-
-        if col_fecha_sal and col_total_sal:
-            df_salida_limp['dt_real'] = pd.to_datetime(df_salida_limp[col_fecha_sal], errors='coerce')
-            df_salida_limp['anio'] = df_salida_limp['dt_real'].dt.year
-            df_salida_limp['mes_num'] = df_salida_limp['dt_real'].dt.month
-
-            for (anio_val, mes_num), sub_df in df_salida_limp.groupby(['anio', 'mes_num']):
-                if pd.isna(anio_val) or pd.isna(mes_num):
-                    continue
-                
-                nombre_m = lista_meses_nombres[int(mes_num) - 1]
-                nombre_periodo = f"{nombre_m.capitalize()} {int(anio_val)}"
-                
-                costo_mes = sub_df[col_total_sal].apply(convertir_a_numero_precio).sum()
-
-                # BÚSQUEDA ROBUSTA DE PAÑOS EN GOOGLE SHEETS
-                panos_mes = 0
-                if df_ind_sheet is not None and not df_ind_sheet.empty:
-                    col_mes_ind = df_ind_sheet.columns[0]
-                    col_panos_ind = df_ind_sheet.columns[1]
-                    
-                    for _, fila_ind in df_ind_sheet.iterrows():
-                        celda_mes_str = str(fila_ind[col_mes_ind]).strip().lower()
-                        # Comprobamos si coincide el mes y el año en el texto del Sheet
-                        if nombre_m in celda_mes_str and str(anio_val) in celda_mes_str:
-                            val_p = fila_ind[col_panos_ind]
-                            if pd.notna(val_p) and str(val_p).strip() != "":
-                                try:
-                                    panos_mes = int(float(str(val_p).replace(',', '.')))
-                                except:
-                                    panos_mes = 0
-                            break
-
-                costo_x_pano = (costo_mes / panos_mes) if panos_mes > 0 else 0.0
-                
-                resumen_meses.append({
-                    "Período / Mes": nombre_periodo,
-                    "Consumo Insumos ($)": costo_mes,
-                    "Paños Realizados": panos_mes,
-                    "Costo por Paño ($)": costo_x_pano,
-                    "orden_cronologico": int(anio_val) * 100 + int(mes_num)
-                })
-
-    df_resumen = pd.DataFrame(resumen_meses)
 
     if "Todos" in periodo_seleccionado:
         total_consumo = df_resumen["Consumo Insumos ($)"].sum() if not df_resumen.empty else 0.0
@@ -732,24 +756,302 @@ with tab_indicadores:
             total_panos = 0
             costo_promedio = 0.0
 
-    st.markdown("### 📈 Indicadores Globales del Período")
+    st.markdown("### 📈 Indicadores Globales de Producción y Costos")
     
     kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric(label="CONSUMO DE INS. (HISTÓRICO REAL)", value=formatear_precio(total_consumo))
+    kpi1.metric(label="CONSUMO DE INS. (REGISTRADO)", value=formatear_precio(total_consumo))
     kpi2.metric(label="PAÑOS REALIZADOS", value=f"{total_panos}")
     kpi3.metric(label="COSTO PROMEDIO X PAÑO", value=formatear_precio(costo_promedio))
 
+    if not df_resumen.empty:
+        st.markdown("---")
+        st.markdown("### 📊 Evolución Mensual de Consumo de Insumos")
+        df_grafico = df_resumen.sort_values(by="orden_cronologico", ascending=True).set_index("Período / Mes")[["Consumo Insumos ($)"]]
+        
+        tipo_grafico = st.radio("Tipo de visualización:", options=["Gráfico de Líneas 📈", "Gráfico de Barras 📊"], horizontal=True, key="tipo_grafico_evolucion")
+        if "Líneas" in tipo_grafico:
+            st.line_chart(df_grafico)
+        else:
+            st.bar_chart(df_grafico)
+
     st.markdown("---")
 
-    st.markdown("### 📋 Resumen Histórico Detallado (Cargado en Google Sheets)")
-    st.info("💡 *Los datos de 'Paños Realizados' se leen directamente de tu pestaña 'indicadores' en Google Sheets.*")
-
+    st.markdown("### 📋 Resumen Histórico (Meses con Movimiento)")
     if not df_resumen.empty:
-        df_resumen_display = df_resumen.sort_values(by="orden_cronologico", ascending=False).drop(columns=["orden_cronologico"]).copy()
-
+        df_resumen_display = df_resumen.sort_values(by="orden_cronologico", ascending=False).head(6).drop(columns=["orden_cronologico"]).copy()
         df_resumen_display["Consumo Insumos ($)"] = df_resumen_display["Consumo Insumos ($)"].apply(formatear_precio)
         df_resumen_display["Costo por Paño ($)"] = df_resumen_display["Costo por Paño ($)"].apply(formatear_precio)
-
         st.dataframe(df_resumen_display, use_container_width=True, hide_index=True)
     else:
-        st.info("No hay registros de salidas suficientes para calcular indicadores históricos.")
+        st.info("Todavía no hay registros con consumos o paños cargados para mostrar en el histórico.")
+
+    st.markdown("---")
+    st.subheader("🏆 Análisis y Rankings del Taller")
+
+    opciones_ranking = ["Histórico Completo (Acumulado)"] + lista_opciones_str
+    periodo_ranking_sel = st.selectbox("📅 Filtrar Rankings por Período:", options=opciones_ranking, index=0, key="sel_periodo_ranking_taller")
+
+    df_salida_para_ranking = df_salida_limp.copy()
+    if periodo_ranking_sel != "Histórico Completo (Acumulado)" and not df_salida_para_ranking.empty:
+        partes_rk = periodo_ranking_sel.split()
+        mes_str_rk, anio_str_rk = partes_rk[0], int(partes_rk[1])
+        mes_num_rk = [k for k, v in MESES_ESPANOL.items() if v.lower() == mes_str_rk.lower()][0]
+        if 'dt_real' in df_salida_para_ranking.columns:
+            df_salida_para_ranking = df_salida_para_ranking[
+                (df_salida_para_ranking['dt_real'].dt.year == anio_str_rk) & 
+                (df_salida_para_ranking['dt_real'].dt.month == mes_num_rk)
+            ]
+
+    col_top1, col_top2 = st.columns(2)
+
+    with col_top1:
+        st.markdown(f"#### 🔥 Top 5 Insumos con Mayor Costo ({periodo_ranking_sel})")
+        if not df_salida_para_ranking.empty:
+            c_prod_s = next((c for c in df_salida_para_ranking.columns if any(k in str(c).lower() for k in ['producto', 'detalle', 'insumo'])), None)
+            c_cant_s = next((c for c in df_salida_para_ranking.columns if 'cantidad' in str(c).lower()), None)
+            c_tot_s = next((c for c in df_salida_para_ranking.columns if 'precio_total' in str(c).lower() or 'total' in str(c).lower()), None)
+
+            if c_prod_s and c_cant_s:
+                df_salida_para_ranking['cant_num'] = df_salida_para_ranking[c_cant_s].apply(convertir_a_numero_precio)
+                df_salida_para_ranking['tot_num'] = df_salida_para_ranking[c_tot_s].apply(convertir_a_numero_precio) if c_tot_s else 0.0
+
+                top_insumos = df_salida_para_ranking.groupby(c_prod_s).agg({
+                    'cant_num': 'sum',
+                    'tot_num': 'sum'
+                }).reset_index().sort_values(by='tot_num', ascending=False).head(5)
+
+                top_insumos.columns = ["Producto / Insumo", "Cantidad Total", "Gasto Total ($)"]
+                top_insumos["Gasto Total ($)"] = top_insumos["Gasto Total ($)"].apply(formatear_precio)
+                st.dataframe(top_insumos, use_container_width=True, hide_index=True)
+            else:
+                st.info("No se encontraron columnas de producto/cantidad en salidas.")
+        else:
+            st.info("No hay datos de salidas registrados para este período.")
+
+    with col_top2:
+        st.markdown(f"#### 👷 Top Técnicos / Responsables ({periodo_ranking_sel})")
+        if not df_salida_para_ranking.empty:
+            c_tec_s = next((c for c in df_salida_para_ranking.columns if any(k in str(c).lower() for k in ['nombre', 'tecnico', 'responsable'])), None)
+            if c_tec_s and c_cant_s:
+                top_tecnicos = df_salida_para_ranking.groupby(c_tec_s).agg({
+                    'cant_num': 'sum',
+                    'tot_num': 'sum'
+                }).reset_index().sort_values(by='tot_num', ascending=False).head(5)
+
+                top_tecnicos.columns = ["Técnico / Responsable", "Unidades Retiradas", "Costo Asignado ($)"]
+                top_tecnicos["Costo Asignado ($)"] = top_tecnicos["Costo Asignado ($)"].apply(formatear_precio)
+                st.dataframe(top_tecnicos, use_container_width=True, hide_index=True)
+            else:
+                st.info("No se encontró la columna de técnico/nombre en salidas.")
+        else:
+            st.info("No hay datos de salidas registrados para este período.")
+
+    st.markdown("---")
+    st.subheader("🔎 Consulta Histórica Detallada de Ingresos (Por Proveedor)")
+    
+    tipo_consulta_ing = st.radio(
+        "Seleccioná el modo de consulta (Ingresos):",
+        options=["🏢 Ver por Proveedor (Con filtros opcionales de Período y Producto)", "📦 Ver por Producto / Insumo (Con filtro opcional de Período)"],
+        horizontal=True,
+        key="radio_consulta_ing_ind"
+    )
+
+    if df_ingreso_raw is not None and not df_ingreso_raw.empty:
+        df_ing_historial = limpiar_tabla(df_ingreso_raw)
+        
+        col_prov_h = next((c for c in df_ing_historial.columns if any(k in str(c).lower() for k in ['proveedor', 'proovedor', 'local', 'vendedor'])), None)
+        col_prod_ing_h = next((c for c in df_ing_historial.columns if any(k in str(c).lower() for k in ['producto', 'detalle', 'insumo'])), df_ing_historial.columns[2] if len(df_ing_historial.columns) > 2 else df_ing_historial.columns[0])
+        col_cant_ing_h = next((c for c in df_ing_historial.columns if 'cantidad' in str(c).lower()), None)
+        col_fecha_ing_h = next((c for c in df_ing_historial.columns if 'fecha' in str(c).lower()), None)
+
+        periodos_ing_disp = ["[ Todos los períodos (Histórico completo) ]"]
+        if col_fecha_ing_h:
+            df_ing_historial['dt_aux_ing'] = pd.to_datetime(df_ing_historial[col_fecha_ing_h], errors='coerce', dayfirst=True)
+            pares_aniomes_ing = df_ing_historial['dt_aux_ing'].dropna().apply(lambda x: (x.year, x.month)).unique()
+            pares_ordenados_ing = sorted(list(pares_aniomes_ing), reverse=True)
+            for a, m in pares_ordenados_ing:
+                m_nombre = MESES_ESPANOL.get(m, "")
+                if m_nombre:
+                    periodos_ing_disp.append(f"{m_nombre} {a}")
+
+        if "Proveedor" in tipo_consulta_ing and col_prov_h and col_prod_ing_h:
+            lista_proveedores = sorted([p for p in df_ing_historial[col_prov_h].dropna().astype(str).unique() if p and p.lower() != "nan"])
+            prov_elegido = st.selectbox("Seleccionar Proveedor:", options=lista_proveedores, index=None, placeholder="Escribí o seleccioná un proveedor...", key="sel_prov_filtro_ind")
+            
+            if prov_elegido:
+                df_prov_filtrado = df_ing_historial[df_ing_historial[col_prov_h].astype(str).str.lower() == prov_elegido.lower()].copy()
+                
+                periodo_elegido_ing = st.selectbox("📅 Filtrar por Período (Opcional):", options=periodos_ing_disp, key="sel_periodo_prov_ind")
+                
+                if periodo_elegido_ing != "[ Todos los períodos (Histórico completo) ]":
+                    partes = periodo_elegido_ing.split()
+                    mes_str, anio_str = partes[0], int(partes[1])
+                    mes_num_sel = [k for k, v in MESES_ESPANOL.items() if v.lower() == mes_str.lower()][0]
+                    df_prov_filtrado = df_prov_filtrado[(df_prov_filtrado['dt_aux_ing'].dt.year == anio_str) & (df_prov_filtrado['dt_aux_ing'].dt.month == mes_num_sel)]
+
+                lista_prods_prov = sorted([p for p in df_prov_filtrado[col_prod_ing_h].dropna().astype(str).unique() if p and p.lower() != "nan"])
+                prod_esp_prov = st.selectbox("📦 Filtrar por un producto específico (Opcional):", options=["[ Todos los productos ]"] + lista_prods_prov, index=0, key="sel_prod_prov_ind")
+
+                if prod_esp_prov != "[ Todos los productos ]":
+                    df_prov_filtrado = df_prov_filtrado[df_prov_filtrado[col_prod_ing_h].astype(str).str.lower() == prod_esp_prov.lower()]
+
+                total_uni_prov = int(df_prov_filtrado[col_cant_ing_h].apply(convertir_a_numero_precio).sum()) if col_cant_ing_h else len(df_prov_filtrado)
+                
+                if col_fecha_ing_h and 'dt_aux_ing' in df_prov_filtrado.columns:
+                    df_prov_filtrado[col_fecha_ing_h] = df_prov_filtrado['dt_aux_ing'].dt.strftime('%d-%m-%Y')
+
+                st.success(f"🏢 **{prov_elegido}** entregó un total de **{total_uni_prov} unidades** según los filtros aplicados.")
+                st.dataframe(df_prov_filtrado.drop(columns=['dt_aux_ing'], errors='ignore'), use_container_width=True, hide_index=True)
+            else:
+                st.info("👆 Seleccioná un proveedor para ver su historial completo de entregas.")
+
+        elif "Producto" in tipo_consulta_ing and col_prod_ing_h:
+            lista_productos_ing = sorted([p for p in df_ing_historial[col_prod_ing_h].dropna().astype(str).unique() if p and p.lower() != "nan"])
+            prod_ing_elegido = st.selectbox("Seleccionar Producto / Insumo (Ingresos):", options=lista_productos_ing, index=None, placeholder="Escribí o seleccioná un producto...", key="sel_prod_ing_filtro_ind")
+            
+            if prod_ing_elegido:
+                df_prod_ing_filtrado = df_ing_historial[df_ing_historial[col_prod_ing_h].astype(str).str.lower() == prod_ing_elegido.lower()].copy()
+                
+                periodo_elegido_ing_p = st.selectbox("📅 Filtrar por Período (Opcional):", options=periodos_ing_disp, key="sel_periodo_prod_ing_ind")
+                
+                if periodo_elegido_ing_p != "[ Todos los períodos (Histórico completo) ]":
+                    partes_p = periodo_elegido_ing_p.split()
+                    mes_str_p, anio_str_p = partes_p[0], int(partes_p[1])
+                    mes_num_sel_p = [k for k, v in MESES_ESPANOL.items() if v.lower() == mes_str_p.lower()][0]
+                    df_prod_ing_filtrado = df_prod_ing_filtrado[(df_prod_ing_filtrado['dt_aux_ing'].dt.year == anio_str_p) & (df_prod_ing_filtrado['dt_aux_ing'].dt.month == mes_num_sel_p)]
+
+                total_uni_prod_ing = int(df_prod_ing_filtrado[col_cant_ing_h].apply(convertir_a_numero_precio).sum()) if col_cant_ing_h else len(df_prod_ing_filtrado)
+                
+                if col_fecha_ing_h and 'dt_aux_ing' in df_prod_ing_filtrado.columns:
+                    df_prod_ing_filtrado[col_fecha_ing_h] = df_prod_ing_filtrado['dt_aux_ing'].dt.strftime('%d-%m-%Y')
+
+                st.success(f"📦 Del producto **{prod_ing_elegido}** se ingresaron **{total_uni_prod_ing} unidades** en el período seleccionado.")
+                st.dataframe(df_prod_ing_filtrado.drop(columns=['dt_aux_ing'], errors='ignore'), use_container_width=True, hide_index=True)
+            else:
+                st.info("👆 Seleccioná un producto para ver el detalle histórico de sus ingresos.")
+
+    st.markdown("---")
+    st.subheader("🔎 Consulta Histórica Detallada de Salidas (Por Técnico)")
+    
+    tipo_consulta = st.radio(
+        "Seleccioná el modo de consulta (Salidas):",
+        options=["👷 Ver por Técnico (Con filtros opcionales de Período y Producto)", "📦 Ver por Producto / Insumo (Con filtro opcional de Período)"],
+        horizontal=True,
+        key="radio_consulta_sal_ind"
+    )
+
+    if df_salida_raw is not None and not df_salida_raw.empty:
+        df_historial_total = limpiar_tabla(df_salida_raw)
+        
+        col_tec_h = next((c for c in df_historial_total.columns if any(k in str(c).lower() for k in ['nombre', 'tecnico', 'responsable'])), None)
+        col_prod_h = next((c for c in df_historial_total.columns if any(k in str(c).lower() for k in ['producto', 'detalle', 'insumo'])), df_historial_total.columns[2] if len(df_historial_total.columns) > 2 else df_historial_total.columns[0])
+        col_cant_h = next((c for c in df_historial_total.columns if 'cantidad' in str(c).lower()), None)
+        col_fecha_h = next((c for c in df_historial_total.columns if 'fecha' in str(c).lower()), None)
+
+        periodos_disponibles_consulta = ["[ Todos los períodos (Histórico completo) ]"]
+        if col_fecha_h:
+            df_historial_total['dt_aux'] = pd.to_datetime(df_historial_total[col_fecha_h], errors='coerce', dayfirst=True)
+            pares_aniomes = df_historial_total['dt_aux'].dropna().apply(lambda x: (x.year, x.month)).unique()
+            pares_ordenados = sorted(list(pares_aniomes), reverse=True)
+            for a, m in pares_ordenados:
+                m_nombre = MESES_ESPANOL.get(m, "")
+                if m_nombre:
+                    periodos_disponibles_consulta.append(f"{m_nombre} {a}")
+
+        if "Técnico" in tipo_consulta and col_tec_h and col_prod_h:
+            lista_tecnicos = sorted([t for t in df_historial_total[col_tec_h].dropna().astype(str).unique() if t and t.lower() != "nan"])
+            tec_elegido = st.selectbox("Seleccionar Técnico:", options=lista_tecnicos, index=None, placeholder="Escribí o seleccioná un técnico...", key="sel_tec_filtro_ind")
+            
+            if tec_elegido:
+                df_tec_filtrado = df_historial_total[df_historial_total[col_tec_h].astype(str).str.lower() == tec_elegido.lower()].copy()
+                
+                periodo_elegido_consulta = st.selectbox("📅 Filtrar por Período (Opcional):", options=periodos_disponibles_consulta, key="sel_periodo_tec_ind")
+                
+                if periodo_elegido_consulta != "[ Todos los períodos (Histórico completo) ]":
+                    partes = periodo_elegido_consulta.split()
+                    mes_str, anio_str = partes[0], int(partes[1])
+                    mes_num_sel = [k for k, v in MESES_ESPANOL.items() if v.lower() == mes_str.lower()][0]
+                    df_tec_filtrado = df_tec_filtrado[(df_tec_filtrado['dt_aux'].dt.year == anio_str) & (df_tec_filtrado['dt_aux'].dt.month == mes_num_sel)]
+
+                lista_prods_tec = sorted([p for p in df_tec_filtrado[col_prod_h].dropna().astype(str).unique() if p and p.lower() != "nan"])
+                prod_especifico = st.selectbox("📦 Filtrar por un producto específico (Opcional):", options=["[ Todos los productos ]"] + lista_prods_tec, index=0, key="sel_prod_tec_ind")
+
+                if prod_especifico != "[ Todos los productos ]":
+                    df_tec_filtrado = df_tec_filtrado[df_tec_filtrado[col_prod_h].astype(str).str.lower() == prod_especifico.lower()]
+
+                total_uni_tec = int(df_tec_filtrado[col_cant_h].apply(convertir_a_numero_precio).sum()) if col_cant_h else len(df_tec_filtrado)
+                
+                if col_fecha_h and 'dt_aux' in df_tec_filtrado.columns:
+                    df_tec_filtrado[col_fecha_h] = df_tec_filtrado['dt_aux'].dt.strftime('%d-%m-%Y')
+
+                st.success(f"👷 **{tec_elegido}** retiró un total de **{total_uni_tec} unidades** según los filtros aplicados.")
+                st.dataframe(df_tec_filtrado.drop(columns=['dt_aux'], errors='ignore'), use_container_width=True, hide_index=True)
+            else:
+                st.info("👆 Seleccioná un técnico para ver su historial completo y aplicar filtros.")
+
+        elif "Producto" in tipo_consulta and col_prod_h:
+            lista_productos_h = sorted([p for p in df_historial_total[col_prod_h].dropna().astype(str).unique() if p and p.lower() != "nan"])
+            prod_elegido = st.selectbox("Seleccionar Producto / Insumo:", options=lista_productos_h, index=None, placeholder="Escribí o seleccioná un producto...", key="sel_prod_filtro_ind")
+            
+            if prod_elegido:
+                df_prod_filtrado = df_historial_total[df_historial_total[col_prod_h].astype(str).str.lower() == prod_elegido.lower()].copy()
+                
+                periodo_elegido_consulta_p = st.selectbox("📅 Filtrar por Período (Opcional):", options=periodos_disponibles_consulta, key="sel_periodo_prod_ind_s")
+                
+                if periodo_elegido_consulta_p != "[ Todos los períodos (Histórico completo) ]":
+                    partes_p = periodo_elegido_consulta_p.split()
+                    mes_str_p, anio_str_p = partes_p[0], int(partes_p[1])
+                    mes_num_sel_p = [k for k, v in MESES_ESPANOL.items() if v.lower() == mes_str_p.lower()][0]
+                    df_prod_filtrado = df_prod_filtrado[(df_prod_filtrado['dt_aux'].dt.year == anio_str_p) & (df_prod_filtrado['dt_aux'].dt.month == mes_num_sel_p)]
+
+                total_uni_prod = int(df_prod_filtrado[col_cant_h].apply(convertir_a_numero_precio).sum()) if col_cant_h else len(df_prod_filtrado)
+                
+                if col_fecha_h and 'dt_aux' in df_prod_filtrado.columns:
+                    df_prod_filtrado[col_fecha_h] = df_prod_filtrado['dt_aux'].dt.strftime('%d-%m-%Y')
+
+                st.success(f"📦 Del producto **{prod_elegido}** se retiraron **{total_uni_prod} unidades** en el período seleccionado.")
+                st.dataframe(df_prod_filtrado.drop(columns=['dt_aux'], errors='ignore'), use_container_width=True, hide_index=True)
+            else:
+                st.info("👆 Seleccioná un producto para ver el detalle histórico y filtrar por período si lo deseás.")
+
+    st.markdown("---")
+    st.subheader("🏷️ Indicadores de Stock e Insumos")
+    
+    df_inv_limpio_ind = limpiar_tabla(df_inventario_raw) if df_inventario_raw is not None and not df_inventario_raw.empty else pd.DataFrame()
+    total_articulos = len(df_inv_limpio_ind)
+    porcentaje_critico = 0.0
+    
+    cols_lower_ind = {str(c).lower().strip(): c for c in df_inv_limpio_ind.columns}
+    col_est_ind = next((cols_lower_ind[c] for c in cols_lower_ind if 'estado' in c), None)
+    
+    if col_est_ind and total_articulos > 0:
+        cant_reponer = len(df_inv_limpio_ind[df_inv_limpio_ind[col_est_ind].astype(str).str.strip().str.upper() == "REPONER"])
+        porcentaje_critico = (cant_reponer / total_articulos) * 100
+
+    valor_inmovilizado = 0.0
+    if not df_inv_limpio_ind.empty:
+        col_stock_act = next((cols_lower_ind[c] for c in cols_lower_ind if ('stock' in c or 'actual' in c) and 'min' not in c), None)
+        col_prod_inv_ind = next((cols_lower_ind[c] for c in cols_lower_ind if any(k in c for k in ['producto', 'detalle', 'insumo'])), None)
+        
+        mapa_precios = {}
+        if df_ingreso_raw is not None and not df_ingreso_raw.empty:
+            df_ing_aux = limpiar_tabla(df_ingreso_raw)
+            c_p_ing = next((c for c in df_ing_aux.columns if any(k in str(c).lower() for k in ['producto', 'insumo', 'detalle'])), None)
+            c_pr_ing = next((c for c in df_ing_aux.columns if any(k in str(c).lower() for k in ['precio', 'costo', 'valor'])), None)
+            if c_p_ing and c_pr_ing:
+                for _, r_ing in df_ing_aux.iterrows():
+                    p_nom = str(r_ing[c_p_ing]).strip().lower()
+                    p_val = convertir_a_numero_precio(r_ing[c_pr_ing])
+                    if p_val > 0:
+                        mapa_precios[p_nom] = p_val
+        
+        if col_stock_act and col_prod_inv_ind:
+            for _, r in df_inv_limpio_ind.iterrows():
+                p_n = str(r[col_prod_inv_ind]).strip().lower()
+                s_cant = float(r[col_stock_act]) if pd.notna(r[col_stock_act]) else 0.0
+                precio_unit = mapa_precios.get(p_n, 0.0)
+                valor_inmovilizado += s_cant * precio_unit
+
+    ind_kpi1, ind_kpi2 = st.columns(2)
+    ind_kpi1.metric(label="⚠️ % DE INSUMOS EN ESTADO CRÍTICO", value=f"{porcentaje_critico:.1f}%")
+    ind_kpi2.metric(label="💰 VALOR TOTAL INMOVILIZADO EN STOCK", value=formatear_precio(valor_inmovilizado))
